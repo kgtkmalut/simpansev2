@@ -1,17 +1,17 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Sidebar } from './components/Sidebar.tsx';
-import { Catalog } from './components/Catalog.tsx';
-import { LoanForm } from './components/LoanForm.tsx';
-import { AdminDashboard } from './components/AdminDashboard.tsx';
-import { ItemManagement } from './components/ItemManagement.tsx';
-import { VerificatorDashboard } from './components/VerificatorDashboard.tsx';
-import { SuperAdminDashboard } from './components/SuperAdminDashboard.tsx';
-import { SuperAdminSettings } from './components/SuperAdminSettings.tsx';
-import { LoginGate } from './components/LoginGate.tsx';
-import { NotificationToast } from './components/NotificationToast.tsx';
-import { LoanDetailModal } from './components/LoanDetailModal.tsx';
-import { INITIAL_ITEMS } from './constants.tsx';
+import { Sidebar } from './components/Sidebar';
+import { Catalog } from './components/Catalog';
+import { LoanForm } from './components/LoanForm';
+import { AdminDashboard } from './components/AdminDashboard';
+import { ItemManagement } from './components/ItemManagement';
+import { VerificatorDashboard } from './components/VerificatorDashboard';
+import { SuperAdminDashboard } from './components/SuperAdminDashboard';
+import { SuperAdminSettings } from './components/SuperAdminSettings';
+import { LoginGate } from './components/LoginGate';
+import { NotificationToast } from './components/NotificationToast';
+import { LoanDetailModal } from './components/LoanDetailModal';
+import { INITIAL_ITEMS } from './constants';
 import { Item, Loan, ViewType, ItemStatus, UserRole, SystemConfig, LoanStatus, UserAccount } from './types';
 
 const DEFAULT_CONFIG: SystemConfig = {
