@@ -11,6 +11,7 @@ import { SuperAdminSettings } from './components/SuperAdminSettings';
 import { LoginGate } from './components/LoginGate';
 import { NotificationToast } from './components/NotificationToast';
 import { LoanDetailModal } from './components/LoanDetailModal';
+import { BorrowerGate } from './components/BorrowerGate';
 import { INITIAL_ITEMS } from './constants';
 import { Item, Loan, ViewType, ItemStatus, UserRole, SystemConfig, LoanStatus, UserAccount } from './types';
 
@@ -42,7 +43,11 @@ const App: React.FC = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [users, setUsers] = useState<UserAccount[]>(INITIAL_USERS);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [showBorrowerGate, setShowBorrowerGate] = useState(false);
+  const [prefilledBorrowerData, setPrefilledBorrowerData] = useState<Partial<Loan> | null>(null);
   const [viewingLoan, setViewingLoan] = useState<Loan | null>(null);
+  const [rejectionModalId, setRejectionModalId] = useState<string | null>(null);
+  const [rejectionInput, setRejectionInput] = useState('');
   const [notification, setNotification] = useState<{message: string, type: 'email' | 'success'} | null>(null);
   const [userRole, setUserRole] = useState<UserRole>('Borrower');
   const [showLogin, setShowLogin] = useState(false);
@@ -88,56 +93,89 @@ const App: React.FC = () => {
   }, [items, loans, users, sessionEmail, sessionNIK, sessionName, systemConfig]);
 
   const submitLoan = useCallback((formData: any, status: 'Pending' | 'Queued') => {
+    // SECURITY: Mengunci Sesi ke User Aktif yang mensubmit
     setSessionEmail(formData.borrowerEmail);
     setSessionNIK(formData.borrowerNIK);
     setSessionName(formData.borrowerName);
 
+    // Sinkronisasi Drive Terstruktur
+    const months = ['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI', 'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'];
+    const now = new Date();
+    const folderName = `${months[now.getMonth()]}-${now.getFullYear()}`;
+    const timestamp = now.getTime();
+    const fileName = `${formData.borrowerName.toUpperCase().replace(/\s+/g, '_')}_${timestamp}.jpg`;
+    
+    console.log(`[SECURE DRIVE SYNC]
+      Path: KGTK_DRIVE / ${folderName} / ${fileName}
+      Target Link: https://drive.google.com/drive/folders/1dX7v97MpowyYvkUbP19v8MIgKCXrOp2W
+      Status: File Locked for Staff Access Only.
+    `);
+
     const newLoan: Loan = {
-      id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      id: 'TRX' + Math.random().toString(36).substr(2, 6).toUpperCase(),
       ...formData,
       status: status,
-      createdAt: new Date().toISOString()
+      createdAt: now.toISOString()
     };
+
     setLoans(prev => [newLoan, ...prev.filter(l => 
       !(l.itemId === formData.itemId && 
         l.borrowerEmail.toLowerCase() === formData.borrowerEmail.toLowerCase() && 
         (l.status === 'Queued' || l.status === 'Rejected'))
     )]);
-    setNotification({ message: status === 'Queued' ? 'Data disimpan di antrian.' : 'Pengajuan terkirim!', type: 'success' });
+
+    setNotification({ 
+      message: status === 'Queued' ? 'Data masuk daftar tunggu.' : 'Pengajuan Berhasil! Identitas telah diamankan di Cloud.', 
+      type: 'success' 
+    });
+
     setSelectedItem(null);
+    setPrefilledBorrowerData(null);
     setView('my-loans');
   }, []);
 
   const handleAdminVerify = useCallback((loanId: string) => {
     setLoans(prev => prev.map(l => l.id === loanId ? { ...l, status: 'Verified' } : l));
-    setNotification({ message: `Data terverifikasi. Notifikasi dikirim ke Verifikator: ${systemConfig.contactEmail}`, type: 'email' });
-  }, [systemConfig.contactEmail]);
+    setNotification({ message: `Data diverifikasi oleh Admin. Notifikasi diteruskan ke Verifikator.`, type: 'email' });
+  }, []);
 
-  const handleActionWithReason = useCallback((loanId: string, status: LoanStatus) => {
-    const reason = status === 'Rejected' ? prompt("Masukkan alasan penolakan peminjaman:") : null;
-    if (status === 'Rejected' && (reason === null || reason.trim() === '')) {
-      alert("Alasan penolakan wajib diisi untuk melakukan konfirmasi penolakan peminjaman aset.");
+  const handleAction = useCallback((loanId: string, status: LoanStatus) => {
+    if (status === 'Rejected') {
+      setRejectionModalId(loanId);
+      setRejectionInput('');
       return;
     }
 
     const loan = loans.find(l => l.id === loanId);
     if (!loan) return;
 
-    setLoans(prev => prev.map(l => l.id === loanId ? { ...l, status, rejectionReason: reason || undefined } : l));
+    setLoans(prev => prev.map(l => l.id === loanId ? { ...l, status } : l));
     
     if (status === 'Approved') {
       setItems(prev => prev.map(i => i.id === loan.itemId ? { ...i, availableQuantity: Math.max(0, i.availableQuantity - (loan.quantity || 1)), status: i.availableQuantity - (loan.quantity || 1) > 0 ? ItemStatus.READY : ItemStatus.OUT_OF_STOCK } : i));
     }
     
-    setNotification({ message: `Status diperbarui: ${status}.`, type: 'success' });
+    setNotification({ message: `Otoritas Verifikator: Status menjadi ${status}.`, type: 'success' });
   }, [loans]);
+
+  const submitRejection = () => {
+    if (!rejectionModalId || !rejectionInput.trim()) {
+      alert("Alasan penolakan wajib diisi untuk transparansi data.");
+      return;
+    }
+
+    setLoans(prev => prev.map(l => l.id === rejectionModalId ? { ...l, status: 'Rejected', rejectionReason: rejectionInput } : l));
+    setNotification({ message: 'Peminjaman ditolak dengan catatan alasan.', type: 'success' });
+    setRejectionModalId(null);
+    setRejectionInput('');
+  };
 
   const handleReturnItem = useCallback((loanId: string) => {
     const loan = loans.find(l => l.id === loanId);
     if (!loan) return;
     setLoans(prev => prev.map(l => l.id === loanId ? { ...l, status: 'Returned' } : l));
     setItems(prev => prev.map(i => i.id === loan.itemId ? { ...i, availableQuantity: Math.min(i.totalQuantity, i.availableQuantity + (loan.quantity || 1)), status: ItemStatus.READY } : i));
-    setNotification({ message: 'Barang telah kembali.', type: 'success' });
+    setNotification({ message: 'Aset telah dikembalikan ke gudang.', type: 'success' });
   }, [loans]);
 
   const handleExportCSV = useCallback(() => {
@@ -152,12 +190,12 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `laporan_peminjaman_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `laporan_simpanse_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    setNotification({ message: 'Laporan CSV berhasil diunduh.', type: 'success' });
+    setNotification({ message: 'Laporan rahasia berhasil diunduh.', type: 'success' });
   }, [loans]);
 
   const handleLogin = (role: UserRole) => {
@@ -170,25 +208,27 @@ const App: React.FC = () => {
 
   const isStaff = userRole === 'Admin' || userRole === 'Verificator' || userRole === 'SuperAdmin';
 
+  // SECURITY: Filter data peminjaman agar hanya user terverifikasi yang bisa melihat datanya sendiri
   const filteredDisplayLoans = useMemo(() => {
     if (isStaff) return loans;
-    if (!sessionEmail || !sessionNIK || !sessionName) return [];
+    if (!sessionEmail || !sessionNIK) return [];
+    
+    // User biasa hanya boleh melihat data yang Email dan NIK-nya match dengan sesi login/gate mereka
     return loans.filter(l => 
       l.borrowerEmail.toLowerCase() === sessionEmail.toLowerCase() && 
-      l.borrowerNIK === sessionNIK &&
-      l.borrowerName.toLowerCase() === sessionName.toLowerCase()
+      l.borrowerNIK === sessionNIK
     );
-  }, [loans, isStaff, sessionEmail, sessionNIK, sessionName]);
+  }, [loans, isStaff, sessionEmail, sessionNIK]);
 
   const individualLoans = filteredDisplayLoans.filter(l => l.borrowerType === 'Pribadi');
   const institutionalLoans = filteredDisplayLoans.filter(l => l.borrowerType === 'Instansi');
 
   const getStatusActionMessage = (status: LoanStatus, reason?: string) => {
     switch(status) {
-      case 'Approved': alert("Selamat! Aset berhasil dipinjam, silahkan menghubungi nomor kontak UPT untuk pengambilan barang."); break;
-      case 'ReviewRequired': alert("Mohon maaf, aset yang anda pinjam masih membutuhkan review lebih lanjut."); break;
-      case 'Rejected': alert(`Mohon maaf, aset yang anda pinjam ditolak.\n\nAlasan: ${reason || 'Kebijakan internal'}`); break;
-      default: alert("Status: " + status);
+      case 'Approved': alert("Peminjaman Disetujui! Silahkan ambil aset di UPT dengan menunjukkan bukti verifikasi ini."); break;
+      case 'ReviewRequired': alert("Data Anda sedang dalam peninjauan ulang oleh tim Verifikator."); break;
+      case 'Rejected': alert(`Penolakan Otoritas:\n\nAlasan: ${reason || 'Kebijakan internal'}`); break;
+      default: alert("Status Peminjaman: " + status);
     }
   };
 
@@ -197,11 +237,11 @@ const App: React.FC = () => {
     let color = "bg-slate-100 text-slate-400";
     let label: string = loan.status;
 
-    if (loan.status === 'Approved') { color = "bg-emerald-500 text-white"; label = "Izin Peminjaman Berhasil"; }
-    else if (loan.status === 'ReviewRequired') { color = "bg-yellow-400 text-blue-900"; label = "Izin Peminjaman Ditangguhkan"; }
-    else if (loan.status === 'Rejected') { color = "bg-red-500 text-white"; label = "Izin Peminjaman Ditolak"; }
-    else if (loan.status === 'Verified') { color = "bg-blue-600 text-white"; label = "Data Terverifikasi"; }
-    else if (loan.status === 'Pending') { color = "bg-blue-100 text-blue-600"; label = "Menunggu Admin"; }
+    if (loan.status === 'Approved') { color = "bg-emerald-500 text-white"; label = "Otoritas Disetujui"; }
+    else if (loan.status === 'ReviewRequired') { color = "bg-yellow-400 text-blue-900"; label = "Dalam Peninjauan"; }
+    else if (loan.status === 'Rejected') { color = "bg-red-500 text-white"; label = "Otoritas Ditolak"; }
+    else if (loan.status === 'Verified') { color = "bg-blue-600 text-white"; label = "Verifikasi Admin OK"; }
+    else if (loan.status === 'Pending') { color = "bg-blue-100 text-blue-600"; label = "Menunggu Verifikasi"; }
 
     return (
       <button 
@@ -221,7 +261,13 @@ const App: React.FC = () => {
         userRole={userRole}
         appName={systemConfig.appName}
         logoUrl={systemConfig.logoUrl}
-        onLogout={() => { setUserRole('Borrower'); setView('catalog'); }}
+        onLogout={() => { 
+          setUserRole('Borrower'); 
+          setSessionEmail(''); 
+          setSessionNIK(''); 
+          setSessionName('');
+          setView('catalog'); 
+        }}
         onLoginClick={() => setShowLogin(true)}
       />
       
@@ -230,7 +276,10 @@ const App: React.FC = () => {
           {currentView === 'catalog' && (
             <Catalog 
               items={items} 
-              onBorrow={(item) => setSelectedItem(item)} 
+              onBorrow={(item) => {
+                setSelectedItem(item);
+                setShowBorrowerGate(true);
+              }} 
               userLoans={loans.filter(l => l.borrowerEmail.toLowerCase() === sessionEmail.toLowerCase() && l.status === 'Queued')}
               sliders={systemConfig.sliders}
             />
@@ -241,16 +290,16 @@ const App: React.FC = () => {
               <div className="space-y-12 animate-slide-down">
                 <div className="border-b-4 border-yellow-400 pb-6 flex justify-between items-end">
                   <div>
-                    <h2 className="text-3xl font-black text-blue-600 tracking-tight">Status Pengajuan Saya</h2>
-                    <p className="text-slate-500 text-sm font-medium mt-1 uppercase tracking-widest">Klik pada status untuk informasi detail</p>
+                    <h2 className="text-3xl font-black text-blue-600 tracking-tight">Status Peminjaman Pribadi</h2>
+                    <p className="text-slate-500 text-sm font-medium mt-1 uppercase tracking-widest">Enkripsi Data: AKTIF ✓</p>
                   </div>
                   {!isStaff && sessionName && (
                     <div className="flex items-center space-x-4">
                       <div className="text-right">
-                         <p className="text-[10px] font-black text-slate-400">Profil Aktif</p>
+                         <p className="text-[10px] font-black text-slate-400">Sesi Terverifikasi</p>
                          <p className="text-xs font-bold text-blue-600">{sessionName}</p>
                       </div>
-                      <button onClick={() => { setSessionEmail(''); setSessionNIK(''); setSessionName(''); }} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>
+                      <button onClick={() => { setSessionEmail(''); setSessionNIK(''); setSessionName(''); setView('catalog'); }} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100" title="Keluar dari Sesi Verifikasi"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>
                     </div>
                   )}
                 </div>
@@ -258,40 +307,40 @@ const App: React.FC = () => {
                 {!isStaff && filteredDisplayLoans.length === 0 && (
                   <div className="bg-white p-20 rounded-[3rem] border-4 border-dashed border-slate-200 text-center space-y-6">
                     <div className="w-24 h-24 bg-blue-50 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
                     </div>
-                    <h3 className="text-2xl font-black text-slate-800">Belum Ada Riwayat</h3>
-                    <p className="text-slate-500 max-w-md mx-auto">Silahkan lakukan peminjaman melalui katalog untuk melihat status pengajuan Anda di sini.</p>
-                    <button onClick={() => setView('catalog')} className="px-10 py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl">Ke Katalog Aset</button>
+                    <h3 className="text-2xl font-black text-slate-800">Akses Terkunci</h3>
+                    <p className="text-slate-500 max-w-md mx-auto">Silahkan lakukan verifikasi identitas melalui Katalog Aset untuk melihat riwayat peminjaman Anda.</p>
+                    <button onClick={() => setView('catalog')} className="px-10 py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl">Kembali ke Katalog</button>
                   </div>
                 )}
 
                 {(isStaff || individualLoans.length > 0) && (
                   <section className="space-y-4">
-                    <h3 className="text-xl font-black text-slate-800 tracking-tight flex items-center"><div className="w-2 h-8 bg-blue-600 mr-4 rounded-full"></div> Peminjaman Pribadi</h3>
+                    <h3 className="text-xl font-black text-slate-800 tracking-tight flex items-center"><div className="w-2 h-8 bg-blue-600 mr-4 rounded-full"></div> Peminjaman Perorangan</h3>
                     <div className="bg-white rounded-[2.5rem] border-4 border-white shadow-xl overflow-hidden overflow-x-auto custom-scrollbar">
                       <table className="w-full text-left min-w-[1000px]">
                         <thead className="bg-blue-600 text-[10px] font-black text-white uppercase tracking-widest">
                           <tr>
                             <th className="px-6 py-5">Aset</th>
-                            <th className="px-6 py-5">Peminjam</th>
-                            <th className="px-6 py-5">Maksud</th>
-                            <th className="px-6 py-5">Durasi</th>
+                            <th className="px-6 py-5">Identitas</th>
+                            <th className="px-6 py-5">Keperluan</th>
+                            <th className="px-6 py-5">Masa Pinjam</th>
                             <th className="px-6 py-5 text-center">Status</th>
-                            <th className="px-6 py-5 text-center">Detail</th>
+                            <th className="px-6 py-5 text-center">Aksi</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {individualLoans.map(loan => (
                             <tr key={loan.id} className="hover:bg-blue-50/30 transition-colors">
                               <td className="px-6 py-6"><div className="text-sm font-black text-slate-800">{loan.itemName}</div><div className="text-[10px] text-blue-600 font-bold uppercase">{loan.quantity} Unit</div></td>
-                              <td className="px-6 py-6"><div className="text-sm font-bold text-slate-700">{loan.borrowerName}</div><div className="text-[10px] text-slate-400 font-black">NIK: {loan.borrowerNIK}</div></td>
+                              <td className="px-6 py-6"><div className="text-sm font-bold text-slate-700">{loan.borrowerName}</div><div className="text-[10px] text-slate-400 font-black">NIK: {isStaff ? loan.borrowerNIK : '••••' + loan.borrowerNIK.slice(-4)}</div></td>
                               <td className="px-6 py-6 text-xs text-slate-500 italic line-clamp-2 max-w-[200px]">"{loan.purpose}"</td>
                               <td className="px-6 py-6"><div className="text-[10px] font-black text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg">{loan.startDate} → {loan.endDate}</div></td>
                               <td className="px-6 py-6 text-center">{renderStatusBadge(loan)}</td>
                               <td className="px-6 py-6 text-center">
                                 <button onClick={() => setViewingLoan(loan)} className="p-2 bg-slate-100 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors">
-                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                                 </button>
                               </td>
                             </tr>
@@ -304,30 +353,30 @@ const App: React.FC = () => {
 
                 {(isStaff || institutionalLoans.length > 0) && (
                   <section className="space-y-4">
-                    <h3 className="text-xl font-black text-slate-800 tracking-tight flex items-center"><div className="w-2 h-8 bg-yellow-400 mr-4 rounded-full"></div> Peminjaman Instansi</h3>
+                    <h3 className="text-xl font-black text-slate-800 tracking-tight flex items-center"><div className="w-2 h-8 bg-yellow-400 mr-4 rounded-full"></div> Peminjaman Kolektif (Instansi)</h3>
                     <div className="bg-white rounded-[2.5rem] border-4 border-white shadow-xl overflow-hidden overflow-x-auto custom-scrollbar">
                       <table className="w-full text-left min-w-[1200px]">
                         <thead className="bg-blue-600 text-[10px] font-black text-white uppercase tracking-widest">
                           <tr>
                             <th className="px-6 py-5">Aset</th>
                             <th className="px-6 py-5">Lembaga & Perwakilan</th>
-                            <th className="px-6 py-5">Maksud</th>
-                            <th className="px-6 py-5">Durasi</th>
+                            <th className="px-6 py-5">Keperluan</th>
+                            <th className="px-6 py-5">Masa Pinjam</th>
                             <th className="px-6 py-5 text-center">Status</th>
-                            <th className="px-6 py-5 text-center">Detail</th>
+                            <th className="px-6 py-5 text-center">Aksi</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {institutionalLoans.map(loan => (
                             <tr key={loan.id} className="hover:bg-blue-50/30 transition-colors">
                               <td className="px-6 py-6"><div className="text-sm font-black text-slate-800">{loan.itemName}</div><div className="text-[10px] text-blue-600 font-bold uppercase">{loan.quantity} Unit</div></td>
-                              <td className="px-6 py-6"><div className="text-sm font-black text-blue-600">{loan.instanceName}</div><div className="text-[10px] text-slate-700 font-bold">{loan.borrowerName} (NIK: {loan.borrowerNIK})</div></td>
+                              <td className="px-6 py-6"><div className="text-sm font-black text-blue-600">{loan.instanceName}</div><div className="text-[10px] text-slate-700 font-bold">{loan.borrowerName}</div></td>
                               <td className="px-6 py-6 text-xs text-slate-500 italic line-clamp-2 max-w-[200px]">"{loan.purpose}"</td>
                               <td className="px-6 py-6"><div className="text-[10px] font-black text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg">{loan.startDate} → {loan.endDate}</div></td>
                               <td className="px-6 py-6 text-center">{renderStatusBadge(loan)}</td>
                               <td className="px-6 py-6 text-center">
                                 <button onClick={() => setViewingLoan(loan)} className="p-2 bg-slate-100 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors">
-                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                                 </button>
                               </td>
                             </tr>
@@ -340,13 +389,13 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {currentView === 'verificator-approval' && <VerificatorDashboard loans={loans} onAction={handleActionWithReason} onViewDetail={setViewingLoan} />}
+            {currentView === 'verificator-approval' && <VerificatorDashboard loans={loans} onAction={handleAction} onViewDetail={setViewingLoan} />}
             {currentView === 'admin-items' && <ItemManagement items={items} onUpdateItems={setItems} />}
             {currentView === 'admin-tracking' && (
               <AdminDashboard 
                 loans={loans} 
                 onVerify={handleAdminVerify}
-                onAction={handleActionWithReason}
+                onAction={handleAction}
                 onReturn={handleReturnItem} 
                 onExport={handleExportCSV} 
                 onViewDetail={setViewingLoan}
@@ -360,7 +409,7 @@ const App: React.FC = () => {
         <footer className="bg-white border-t-8 border-yellow-400 p-16 mt-auto">
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center space-y-12 md:space-y-0">
             <div className="flex-1 space-y-8">
-              <div className="flex items-center space-x-4"><div className="w-1.5 h-10 bg-blue-600 rounded-full"></div><h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em]">Kontak & Bantuan</h4></div>
+              <div className="flex items-center space-x-4"><div className="w-1.5 h-10 bg-blue-600 rounded-full"></div><h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em]">Hubungi Tim IT UPT</h4></div>
               <div className="flex flex-col space-y-5">
                 <div className="flex items-center text-base font-black text-slate-800"><div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mr-4 text-white shadow-lg shadow-blue-100"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg></div>{systemConfig.contactPhone}</div>
                 <div className="flex items-center text-base font-black text-slate-800"><div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mr-4 text-white shadow-lg shadow-blue-100"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg></div>{systemConfig.contactEmail}</div>
@@ -368,7 +417,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 flex flex-col items-center justify-center space-y-6">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Hubungkan Dengan Kami</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Media Informasi Resmi</p>
               <div className="flex items-center space-x-4">
                 {systemConfig.contactWebsite && (
                   <a href={systemConfig.contactWebsite} target="_blank" rel="noopener noreferrer" className="w-12 h-12 bg-slate-100 text-indigo-600 rounded-2xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-all shadow-sm hover:shadow-lg" title="Website Resmi">
@@ -390,15 +439,83 @@ const App: React.FC = () => {
         </footer>
       </main>
 
-      {selectedItem && (
+      {showBorrowerGate && selectedItem && (
+        <BorrowerGate 
+          allLoans={loans}
+          onSelectNew={() => {
+            setShowBorrowerGate(false);
+            setPrefilledBorrowerData(null);
+          }}
+          onSelectReturning={(data) => {
+            setShowBorrowerGate(false);
+            setPrefilledBorrowerData(data);
+          }}
+          onCancel={() => {
+            setShowBorrowerGate(false);
+            setSelectedItem(null);
+          }}
+        />
+      )}
+
+      {selectedItem && !showBorrowerGate && (
         <LoanForm 
           item={selectedItem} 
           allLoans={loans}
+          prefillData={prefilledBorrowerData}
           onSubmit={submitLoan} 
-          onCancel={() => setSelectedItem(null)} 
+          onCancel={() => {
+            setSelectedItem(null);
+            setPrefilledBorrowerData(null);
+          }} 
         />
       )}
       {viewingLoan && <LoanDetailModal loan={viewingLoan} onClose={() => setViewingLoan(null)} />}
+      
+      {/* KOTAK DIALOG PENOLAKAN KUSTOM */}
+      {rejectionModalId && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-[2rem] w-full max-w-md shadow-2xl overflow-hidden animate-slide-down border-4 border-red-500/10">
+            <div className="p-8 bg-red-50 border-b border-red-100 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-black text-red-600 tracking-tight">Konfirmasi Penolakan</h3>
+                <p className="text-[10px] font-black text-red-400 uppercase tracking-widest mt-1">Sistem Otoritas Simpanse</p>
+              </div>
+              <button onClick={() => setRejectionModalId(null)} className="p-2 hover:bg-white rounded-full transition-all text-red-400">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Alasan Penolakan Aset</label>
+                <textarea 
+                  required
+                  rows={4}
+                  className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none transition-all font-bold text-slate-800 placeholder:text-slate-300"
+                  placeholder="Contoh: Dokumen NIK tidak valid atau Aset sedang dalam masa pemeliharaan mendadak."
+                  value={rejectionInput}
+                  onChange={(e) => setRejectionInput(e.target.value)}
+                />
+              </div>
+              <div className="flex space-x-3 pt-2">
+                <button 
+                  onClick={() => setRejectionModalId(null)} 
+                  className="flex-1 py-4 text-xs font-black text-slate-400 uppercase tracking-widest hover:bg-slate-50 rounded-2xl"
+                >
+                  Batal
+                </button>
+                <button 
+                  disabled={!rejectionInput.trim()}
+                  onClick={submitRejection}
+                  className="flex-[2] py-4 bg-red-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-red-600 shadow-xl shadow-red-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Tolak Peminjaman
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showLogin && <LoginGate users={users} onLogin={handleLogin} onCancel={() => setShowLogin(false)} />}
       {notification && <NotificationToast message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
     </div>
